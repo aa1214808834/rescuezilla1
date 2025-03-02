@@ -1,4 +1,4 @@
-on: [push]
+on: [push1]
 jobs:
   rescuezilla-iso-build:
     runs-on: ubuntu-latest
