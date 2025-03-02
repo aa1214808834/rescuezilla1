@@ -1,0 +1,57 @@
+on: [push]
+jobs:
+  rescuezilla-iso-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: true
+          fetch-depth: 0
+
+      # Extract human-readable version string from the most recent CHANGELOG entry
+      - run: echo "RESCUEZILLA_RELEASE_NAME=\"$(git grep -h -E -o '[a-zA-Z].*)' CHANGELOG | head -1)\"" >> $GITHUB_ENV
+      # Get deb package version using same command from its build scripts
+      - run: echo "DEB_VERSION=$(git describe --tags  --match='[0-9].[0-9]*' --abbrev=0)" >> $GITHUB_ENV
+
+      - name: Build with Docker
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+          --platform linux/arm64 \
+          ubuntu:latest /bin/bash -c "\
+            apt update && apt install -y git-lfs git make sudo rsync debootstrap gettext squashfs-tools dosfstools mtools xorriso memtest86+ devscripts debhelper checkinstall cmake time parallel grub-efi-amd64-bin grub-efi-ia32-bin grub-pc-bin shim-signed grub-efi-amd64-signed libtool-bin gawk pkg-config comerr-dev docbook-xsl e2fslibs-dev fuse3 libaal-dev libblkid-dev libbsd-dev libncurses5-dev libncursesw5-dev libntfs-3g89 libreadline-dev libreadline8 readline-common libreiser4-dev libtinfo-dev libxslt1.1 nilfs-tools ntfs-3g ntfs-3g-dev quilt sgml-base uuid-dev vmfs-tools xfslibs-dev xfsprogs xml-core xsltproc ccache libssl-dev build-essential crossbuild-essential-arm64 && \
+            git lfs clone https://github.com/rescuezilla/rescuezilla && \
+            cd rescuezilla/ && \
+            git submodule init && \
+            git submodule update --recursive && \
+            make deb && \
+            mkdir /mnt/ramdisk/ && \
+            mount -t tmpfs -o rw,size=7G tmpfs /mnt/ramdisk/ && \
+            rsync -av . /mnt/ramdisk/ && \
+            cd /mnt/ramdisk/rescuezilla && \
+            make jammy"
+
+      - name: Create checksums for ISO images
+        run: docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/completed-artifacts \
+            ubuntu:latest /bin/bash -c "\
+          ../src/scripts/create-iso-checksums.sh rescuezilla_${{env.DEB_VERSION}}-1_all.deb rescuezilla-${{github.ref_name}}-*.iso"
+
+      - name: Upload release assets (on tag push)
+        uses: softprops/action-gh-release@v1
+        if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+        with:
+          files: |
+            completed-artifacts/*SUM
+            completed-artifacts/rescuezilla_${{env.DEB_VERSION}}-1_all.deb
+            completed-artifacts/rescuezilla-${{github.ref_name}}-*.iso
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: SHA256SUM
+          path: completed-artifacts/SHA256SUM
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: MD5SUM
+          path: completed-artifacts/MD
