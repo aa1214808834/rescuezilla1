@@ -3,7 +3,7 @@
 # 2. 合并同类artifact上传步骤，使用通配符简化
 # 3. 保持原有逻辑不变
 
-on: [push]
+on: [deleted]
 jobs:
   rescuezilla-iso-build:
     runs-on: ubuntu-latest-arm64
