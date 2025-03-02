@@ -46,7 +46,7 @@ jobs:
             completed-artifacts/rescuezilla_${{env.DEB_VERSION}}-1_all.deb
             completed-artifacts/rescuezilla-${{github.ref_name}}-*.iso
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: SHA256SUM
           path: completed-artifacts/SHA256SUM
