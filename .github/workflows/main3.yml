@@ -8,7 +8,7 @@ jobs:
     strategy:
       matrix:
         arch: [arm64]
-        release: [jammy, noble, oracular]  # 添加需要构建的Ubuntu版本
+        release: [bionic, oracular]  # 添加需要构建的Ubuntu版本
 
     steps:
       - name: Checkout code
