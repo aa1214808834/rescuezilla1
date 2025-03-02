@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest-arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           submodules: recursive
           lfs: true
@@ -22,55 +22,23 @@ jobs:
       # Get deb package version using same command from its build scripts
       - run: echo "DEB_VERSION=$(git describe --tags  --match='[0-9].[0-9]*' --abbrev=0)" >> $GITHUB_ENV
 
-      - name: Build Docker image
-        run: make docker-build
+      - name: Build deps
+        run: |
+            sudo apt update
+            sudo apt install -f -y git-lfs git make sudo rsync debootstrap gettext squashfs-tools dosfstools mtools xorriso  memtest86+ devscripts debhelper checkinstall cmake time parallel  grub-efi-amd64-bin grub-efi-ia32-bin grub-pc-bin  shim-signed grub-efi-amd64-signed      libtool-bin gawk pkg-config comerr-dev docbook-xsl e2fslibs-dev fuse3  libaal-dev libblkid-dev libbsd-dev libncurses5-dev    libncursesw5-dev libntfs-3g89 libreadline-dev libreadline8 readline-common  libreiser4-dev libtinfo-dev libxslt1.1 nilfs-tools ntfs-3g ntfs-3g-dev   quilt sgml-base uuid-dev vmfs-tools xfslibs-dev xfsprogs xml-core  xsltproc ccache libssl-dev  build-essential crossbuild-essential-arm64
+            git lfs clone https://github.com/rescuezilla/rescuezilla
+            cd rescuezilla/
+            git submodule init
+            # Download 'partclone' and 'util-linux' submodules
+            git submodule update --recursive
+            # Optional: Build only the standalone deb packages without bothering with the live environment
+            make deb
+            mkdir /mnt/ramdisk/
+            sudo mount -t tmpfs -o rw,size=7G tmpfs /mnt/ramdisk/
+            rsync -av `pwd` /mnt/ramdisk
+            cd /mnt/ramdisk/rescuezilla
+            sudo make jammy
 
-      - name: Launch Docker container
-        run: make docker-run
-
-      - name: Trust the git folder
-        run: make docker-add-safe-directory
-
-      - name: Create completed artifacts folder
-        run: mkdir completed-artifacts/
-
-      - run: make docker-status
-      - name: Make DEB package
-        run: make docker-deb
-      - run: sudo mv build/rescuezilla_${{env.DEB_VERSION}}-1_all.deb completed-artifacts/rescuezilla_${{env.DEB_VERSION}}-1_all.deb
-
-      - name: Run unit tests within the Docker container
-        run: make docker-test
-
-      - run: make docker-status
-      - name: Make Ubuntu 24.04 LTS (Noble) ISO
-        run: make docker-noble-arm64
-      - run: sudo mv build/rescuezilla.amd64.noble.iso completed-artifacts/rescuezilla-${{github.ref_name}}-64bit.noble.iso
-      - run: sudo make clean-all
-
-      - run: make docker-status
-      - name: Make Ubuntu 24.10 (Oracular) ISO
-        run: make docker-oracular-arm64
-      - run: sudo mv build/rescuezilla.amd64.oracular.iso completed-artifacts/rescuezilla-${{github.ref_name}}-64bit.oracular.iso
-      - run: sudo make clean-all
-
-      - run: make docker-status
-      - name: Make Ubuntu 22.04 LTS (Jammy) ISO [LTS  = Long Term Support]
-        run: make docker-jammy-arm64
-      - run: sudo mv build/rescuezilla.amd64.jammy.iso completed-artifacts/rescuezilla-${{github.ref_name}}-64bit.jammy.iso
-      - run: sudo make clean-all
-
-      - run: make docker-status
-      - name: Make Ubuntu 20.04 LTS (Focal) ISO [LTS  = Long Term Support]
-        run: make docker-focal-arm64
-      - run: sudo mv build/rescuezilla.amd64.focal.iso completed-artifacts/rescuezilla-${{github.ref_name}}-64bit.focal.iso
-      - run: sudo make clean-all
-
-      - run: make docker-status
-      - name: Make Ubuntu 18.04 LTS (Bionic) ISO (i386)
-        run: make docker-bionic-arm64
-      - run: sudo mv build/rescuezilla.i386.bionic.iso completed-artifacts/rescuezilla-${{github.ref_name}}-32bit.bionic.iso
-      - run: sudo make clean-all
 
       - name: Create checksums for ISO images
         run: cd completed-artifacts && sudo ../src/scripts/create-iso-checksums.sh rescuezilla_${{env.DEB_VERSION}}-1_all.deb  rescuezilla-${{github.ref_name}}-*.iso
