@@ -3,77 +3,96 @@ name: Build ARM64 RescueZilla ISO
 on: [push]
 
 jobs:
-  rescuezilla-iso-build-arm64:
+  build-arm64-iso:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        ubuntu_release: [jammy, noble]  # 支持的Ubuntu版本
         arch: [arm64]
-        release: [bionic, oracular]  # 添加需要构建的Ubuntu版本
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           lfs: true
           fetch-depth: 0
 
-      # 配置交叉编译环境
-      - name: Setup cross-build tools
+      - name: Setup cross-compilation environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-user-static binfmt-support crossbuild-essential-arm64
+          sudo apt-get install -y \
+            qemu-user-static binfmt-support \
+            crossbuild-essential-arm64 \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
-      # 构建ARM64 Docker镜像
-      - name: Build multi-arch Docker image
-        run: |
-          docker buildx create --use
-          docker buildx build \
-            --platform linux/arm64 \
-            -t rescuezilla-builder-arm64 \
-            --load \
-            .
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            libssl-dev:arm64 \
+            libncurses5-dev:arm64 \
+            libfuse3-dev:arm64
 
-      # 在容器内执行交叉编译
-      - name: Build ISO in container
+      - name: Install build dependencies
         run: |
-          docker run --rm --platform linux/arm64 \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            rescuezilla-builder-arm64 \
-            /bin/bash -c "\
-              make clean-all && \
-              ARCH=${{ matrix.arch }} UBUNTU_CODENAME=${{ matrix.release }} make iso"
+          sudo apt-get install -y \
+            git-lfs make rsync debootstrap \
+            squashfs-tools dosfstools xorriso \
+            devscripts debhelper cmake \
+            grub-efi-arm64-bin shim-signed \
+            libaal-dev:arm64 libblkid-dev:arm64
 
-      # 整理产物
-      - name: Organize artifacts
+      - name: Configure build environment
         run: |
-          mkdir -p completed-artifacts/arm64
-          sudo mv build/rescuezilla.${{ matrix.arch }}.${{ matrix.release }}.iso \
-            completed-artifacts/arm64/rescuezilla-${{ github.ref_name }}-arm64.${{ matrix.release }}.iso
+          echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "DEB_BUILD_OPTIONS=nocheck" >> $GITHUB_ENV
 
-      # 创建校验和
-      - name: Create checksums
+      - name: Build DEB package
+        run: make deb CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++
+
+      - name: Prepare chroot environment
         run: |
-          cd completed-artifacts/arm64 && \
-          sha256sum * > SHA256SUM && \
+          mkdir -p build/chroot
+          sudo qemu-debootstrap --arch=${{ matrix.arch }} \
+            --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg \
+            ${{ matrix.ubuntu_release }} build/chroot \
+            http://ports.ubuntu.com/ubuntu-ports
+
+      - name: Build ISO image
+        run: |
+          sudo make ${{ matrix.ubuntu_release }} \
+            ARCH=${{ matrix.arch }} \
+            DEBOOTSTRAP="qemu-debootstrap --arch=${{ matrix.arch }}" \
+            KERNEL_ARCH=${{ matrix.arch }} \
+            UEFI_ARCH=${{ matrix.arch }} \
+            GRUB_TARGET=arm64-efi \
+            ISO_FILENAME=rescuezilla.${{ matrix.arch }}.${{ matrix.ubuntu_release }}.iso
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p completed-artifacts
+          sudo mv build/rescuezilla.${{ matrix.arch }}.${{ matrix.ubuntu_release }}.iso \
+            completed-artifacts/rescuezilla-${{ github.ref_name }}-${{ matrix.arch }}.${{ matrix.ubuntu_release }}.iso
+          sudo make clean-all
+
+      - name: Generate checksums
+        run: |
+          cd completed-artifacts
+          sha256sum * > SHA256SUM
           md5sum * > MD5SUM
 
-      # 上传产物
       - uses: actions/upload-artifact@v4
+        name: Upload ISO artifacts
         with:
           name: arm64-isos
           path: |
-            completed-artifacts/arm64/SHA256SUM
-            completed-artifacts/arm64/MD5SUM
-            completed-artifacts/arm64/*.iso
+            completed-artifacts/SHA256SUM
+            completed-artifacts/MD5SUM
+            completed-artifacts/*.iso
 
-      # 发布到GitHub Release (仅限标签推送)
-      - name: Upload release assets
+      - name: Create GitHub Release
         if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: completed-artifacts/arm64/*
-
-# 保留原有x86构建流程（可选）
-# 原有x86构建步骤可保持不动，与ARM构建形成矩阵策略
+          files: completed-artifacts/*
